@@ -654,14 +654,15 @@
       "parameters": {
         "documentId": {
           "__rl": true,
-          "value": "10saJTZnkznpxE_Ce8d2yRN82T_4lQr3lxGsJfjfEbvQ",
+          "value": "1Mh8G7Z91uNgc019R-7EOEzQJtHVmFyZWj7YA8YiIu0o",
           "mode": "list",
-          "cachedResultName": "feedback_sheet"
+          "cachedResultName": "feedback",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Mh8G7Z91uNgc019R-7EOEzQJtHVmFyZWj7YA8YiIu0o/edit?usp=drivesdk"
         },
         "sheetName": {
           "__rl": true,
-          "mode": "name",
-          "value": "Sheet1"
+          "value": "Sheet1",
+          "mode": "name"
         },
         "options": {}
       },
@@ -705,7 +706,7 @@
         "messages": {
           "values": [
             {
-              "content": "=Here are the aggregated customer feedback metrics for the past week:\n\n{{ $json.statsText }}\n\nWrite a concise trend summary (3-5 sentences) highlighting the overall sentiment, the most common categories, and any urgent issues that need attention."
+              "content": "=Here are the aggregated customer feedback metrics for the past week:\n\n{{ $json.statsText }}\n\nWrite a concise trend summary (4-5 sentences) highlighting the overall sentiment, the most common categories, and any urgent issues that need attention. But should mention the brife of the complaints all complaint in point base"
             }
           ]
         },
@@ -1199,7 +1200,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "9b10f722-98ed-42c7-a71d-152fc217590a",
+  "versionId": "3b2eb5cd-3f90-4aaf-9737-bb378492df91",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "bab5a45ed273d37a28495d1713e6b0adae600fe817464c9451b38309923a67d9"
