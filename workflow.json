@@ -1,0 +1,1251 @@
+{
+  "name": "Customer Feedback Intelligence - MVP",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "q": "(\"E-commerce\" OR \"Chat Interface\" OR \"Dashboard\" OR feedback OR complaint OR complaints OR issue OR \"product issue\" OR bug OR error OR problem OR broken OR request OR feature OR help OR failed OR failure)",
+          "readStatus": "unread"
+        }
+      },
+      "id": "bc762903-a53c-4b92-b379-0c7aeae20622",
+      "name": "Gmail Trigger",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -64,
+        192
+      ],
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $input.item.json;\n\n// Extract clean email address from From field\nlet from = \"\";\n\nif (typeof j.from === \"string\") {\n  from = j.from.match(/<([^>]+)>/)?.[1] || j.from.trim();\n}\nelse if (j.from?.value?.[0]) {\n  from = j.from.value[0].address || \"\";\n}\nelse if (j.from?.text) {\n  from = j.from.text.match(/<([^>]+)>/)?.[1] || j.from.text.trim();\n}\n\nconst rawBody = j.text || j.textAsHtml || j.snippet || \"\";\nconst body = String(rawBody)\n  .replace(/\\s+/g, \" \")\n  .trim()\n  .slice(0, 4000);\n\nreturn {\n  json: {\n    messageId: j.id || \"\",\n    threadId: j.threadId || \"\",\n    from: j.From,\n    subject: j.Subject || \"(no subject)\",\n    body: j.snippet || \"\",\n    receivedAt: j.date || j.internalDate || new Date().toISOString(),\n  }\n};"
+      },
+      "id": "d7200263-dd58-42f8-b41e-da48f0917d3e",
+      "name": "Normalize Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        160,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-2.5-flash",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Classify this customer feedback email.\n\nSubject: {{ $json.subject }}\n\nBody: {{ $json.body }}"
+            }
+          ]
+        },
+        "jsonOutput": true,
+        "builtInTools": {},
+        "options": {
+          "systemMessage": "=You are a customer feedback classifier and information extraction system. Read the customer email and respond ONLY with a valid JSON object. Use exactly these keys: { \"product\": null, \"feature\": null, \"issue\": null, \"sentiment\": \"neutral\", \"category\": \"other\", \"severity\": \"low\", \"summary\": \"\", \"suggestedAction\": \"\", \"confidence\": 0, \"reviewRequired\": false } Rules: 1. PRODUCT The supported products are: Chat Interface, Dashboard, E-commerce. Return the matching product when clearly mentioned or identifiable. If it cannot be determined, return null. Never invent a product. 2. FEATURE Extract the specific product feature/component involved (e.g. Checkout, Payment, Search, Login, File Upload, Conversation History, Export, Charts, Orders). If none is identifiable, return null. Never invent a feature. 3. ISSUE Extract the main problem, request, question, or subject in a short phrase. If none can be identified, return null. 4. SENTIMENT one of: positive, neutral, negative. 5. CATEGORY one of: bug, feature_request, complaint, praise, question, other. bug = something broken/failing/crashing/incorrect. feature_request = wants a new feature or improvement. complaint = dissatisfaction without the primary intent being a technical bug. praise = positive appreciation. question = asking for information. other = does not clearly fit. 6. SEVERITY one of: low, medium, high, critical. Use the actual impact described; do not raise severity for emotional language. 7. SUMMARY exactly one concise sentence using only information in the email. 8. SUGGESTED ACTION exactly one concise sentence describing the recommended next step; do not promise resolutions or dates. 9. CONFIDENCE a number 0 to 1. 10. REVIEW REQUIRED true if confidence below 0.80, or category/product cannot be determined reliably, or the email is ambiguous; false when classification is clear and confidence >= 0.80. IMPORTANT: Return ONLY the JSON object. No Markdown, no code fences, no explanations, no extra keys. Use null when information is unavailable. Do not guess or hallucinate.\n\nCustomer email subject: {{ $json.subject }}, body: {{ $json.body }}"
+        }
+      },
+      "id": "573f782e-71fb-4d02-8cd8-e4935b54bb8a",
+      "name": "Classify Feedback",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        336,
+        192
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ $json.content.parts[0].text }}",
+        "options": {}
+      },
+      "id": "57b75eb5-2fd3-4ad7-9fdd-db0654049fac",
+      "name": "Edit Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        656,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const j = $input.item.json;\n\nfunction parseC(v) {\n  if (v == null) return null;\n  if (typeof v === \"string\") {\n    try { return JSON.parse(v); } catch (e) { return null; }\n  }\n  if (typeof v === \"object\") {\n    if (typeof v.text === \"string\") {\n      try { return JSON.parse(v.text); } catch (e) { return v; }\n    }\n    return v;\n  }\n  return null;\n}\n\nconst c =\n  parseC(j.content) ||\n  parseC(j.text) ||\n  parseC(j.message) ||\n  parseC(j.output) ||\n  parseC(j) ||\n  {};\n\nfunction norm(s, allowed, def = null) {\n  const v = String(s == null ? \"\" : s).toLowerCase().trim();\n  return allowed.includes(v) ? v : def;\n}\n\nfunction safeString(v, def = \"\") {\n  if (v == null) return def;\n  return typeof v === \"string\" ? v.trim() : String(v).trim();\n}\n\nconst src = $(\"Normalize Email\").item.json || {};\n\nconst validCategories = [\"bug\", \"feature_request\", \"complaint\", \"praise\", \"question\", \"other\"];\nconst category = norm(c.category, validCategories, \"other\");\nconst severity = norm(c.severity || c.priority, [\"low\", \"medium\", \"high\", \"critical\"], \"low\");\nconst sentiment = norm(c.sentiment, [\"positive\", \"neutral\", \"negative\"], \"neutral\");\n\nconst confidence =\n  typeof c.confidence === \"number\" && c.confidence >= 0 && c.confidence <= 1\n    ? c.confidence\n    : null;\n\nconst reviewRequired =\n  typeof c.reviewRequired === \"boolean\"\n    ? c.reviewRequired\n    : confidence === null || confidence < 0.80;\n\nreturn {\n  json: {\n    receivedAt: src.receivedAt || \"\",\n    from: safeString(src.from),\n    subject: safeString(src.subject),\n    body: safeString(src.body),\n    product: c.product ? safeString(c.product) : null,\n    feature: c.feature ? safeString(c.feature) : null,\n    issue: c.issue ? safeString(c.issue) : null,\n    sentiment,\n    category,\n    severity,\n    summary: safeString(c.summary),\n    suggestedAction: safeString(c.suggestedAction || c.suggested_action),\n    confidence,\n    reviewRequired,\n  }\n};"
+      },
+      "id": "3923faa5-07f5-48ab-8323-2c22259e5a5f",
+      "name": "Validate Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        832,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-2.5-flash",
+          "cachedResultName": "gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Write a short, professional 1-2 sentence reply to the customer acknowledging their feedback.\n\nbody: {{ $json.body }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "systemMessage": "You write a brief, neutral summary of a customer feedback email. Respond with only the summary text, no preamble or quotes."
+        }
+      },
+      "id": "93be8560-37bd-443e-9494-8aaca3492227",
+      "name": "Summarize For Reply",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1136,
+        -48
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const g = $input.item.json;\n\nfunction extractText(o) {\n  if (o == null) return \"\";\n  if (typeof o === \"string\") return o;\n  if (typeof o.content === \"string\") return o.content;\n  if (o.content && Array.isArray(o.content.parts)) {\n    return o.content.parts.map(p => p && p.text ? p.text : \"\").join(\"\");\n  }\n  if (o.content && typeof o.content.text === \"string\") return o.content.text;\n  if (Array.isArray(o.parts)) {\n    return o.parts.map(p => p && p.text ? p.text : \"\").join(\"\");\n  }\n  if (typeof o.text === \"string\") return o.text;\n  if (o.message && typeof o.message.content === \"string\") return o.message.content;\n  return \"\";\n}\n\nlet summary = String(extractText(g) || \"\").trim();\n\nconst src = $(\"Validate Classification\").item.json;\nconst msg = $(\"Normalize Email\").item.json;\n\nfunction extractEmail(value) {\n  if (!value) return \"\";\n  if (typeof value === \"object\") {\n    if (Array.isArray(value)) value = value[0];\n    if (value?.address) return String(value.address).trim().toLowerCase();\n    if (value?.email) return String(value.email).trim().toLowerCase();\n    if (value?.text) value = value.text;\n    else value = JSON.stringify(value);\n  }\n  value = String(value).trim();\n  const match = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\n  return match ? match[0].toLowerCase() : \"\";\n}\n\nconst email = extractEmail(src.from);\n\nreturn {\n  json: {\n    messageId: msg.messageId,\n    from: email,\n    subject: \"Reply for the feedback\",\n    summary: summary || src.summary || \"\",\n  }\n};"
+      },
+      "id": "3040bee1-840a-4902-8cdd-49a4df8ccee5",
+      "name": "Prepare Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.from }}",
+        "subject": "={{ $json.subject }}",
+        "message": "=<p>Hi,</p><p>{{ $json.summary }}</p>",
+        "options": {
+          "appendAttribution": false,
+          "replyToSenderOnly": true
+        }
+      },
+      "id": "e745193b-036d-4339-8e61-36b00d25aa81",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1664,
+        -48
+      ],
+      "webhookId": "26650e25-e93f-400b-9380-5d5592f687ce",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "markAsRead",
+        "messageId": "={{ $('Normalize Email').item.json.messageId }}"
+      },
+      "id": "771b2eb1-2676-4c18-808d-5e43e77cd6bd",
+      "name": "Mark a message as read",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1888,
+        -48
+      ],
+      "webhookId": "b86ed34e-e57f-4ee2-aa90-1d7a7fc2ee7b",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6a202492-9768-4bcc-84ad-95b74079686e",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "bug",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "bd542a41-df55-484d-8c68-b9d53810dc03",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "feature_request",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b0d3160d-4cca-4f6e-8a69-c6c385d50b9f",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "complaint",
+                    "operator": {
+                      "type": "string",
+                      "operation": "contains"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "37e414b3-0fbb-4a11-8353-b94c5adadab4",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "praise",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "a7e1b2c3-1111-4a22-9333-c6c385d50b90",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "question",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "id": "b8f2c3d4-2222-4b33-8444-d7d496e61ca1",
+                    "leftValue": "={{ $json.category }}",
+                    "rightValue": "other",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "or"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "aa379d5b-5a9d-4cbb-a9e5-9ea9ca7dedc2",
+      "name": "Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1200,
+        848
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "0a6498ba-68c3-41bf-81e3-d690e0067ece",
+              "name": "receivedAt",
+              "value": "={{ $json.receivedAt }}",
+              "type": "string"
+            },
+            {
+              "id": "d6695f2f-c860-4db3-a27d-e0b7a62a3caf",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "35f82dfd-f3c1-4b0c-b3f8-76603c33bc82",
+              "name": "product",
+              "value": "={{ $json.product }}",
+              "type": "string"
+            },
+            {
+              "id": "3ec75a3a-fb8d-4186-9f97-8ab945404b1a",
+              "name": "summary",
+              "value": "={{ $json.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "b2dcac7a-97c1-49e2-9ebe-6586292e51a1",
+              "name": "suggestedAction",
+              "value": "={{ $json.suggestedAction }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f8fa95c2-a7b9-4ca7-88b4-6f29d0e6b582",
+      "name": "Edit Fields1",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1424,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "subbu22092003cd@gmail.com",
+        "subject": "=Bug in {{ $json.product }}",
+        "message": "=<p>Date: {{ $json.receivedAt }}<p/>\n<p>Product: {{ $json.product }}<p/>\n<p>Subject: {{ $json.subject }}<p/>\n<p>Summary: {{ $json.summary }}<p/>\n<p>Suggestion: {{ $json.suggestedAction }}<p/>",
+        "options": {}
+      },
+      "id": "8c2a51fb-2b63-4e9a-a7b7-efc99ed25ccd",
+      "name": "Send a message",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1648,
+        592
+      ],
+      "webhookId": "42faa3e3-8d7f-4c4f-9c05-bfabe1f0cef0",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9fd8812d-3de8-4da2-b6e4-6fb46de7be69",
+              "name": "receivedAt",
+              "value": "={{ $json.receivedAt }}",
+              "type": "string"
+            },
+            {
+              "id": "fa993fc0-ecdc-4134-be43-a6a3df6f7368",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "b3611f89-6c62-4e37-83cb-209e025e0b4a",
+              "name": "product",
+              "value": "={{ $json.product }}",
+              "type": "string"
+            },
+            {
+              "id": "68b8b856-84d3-4231-a562-818e95c7fed4",
+              "name": "category",
+              "value": "={{ $json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "95449c5a-0af8-4cfd-b3e3-e3c7d13213c6",
+              "name": "summary",
+              "value": "={{ $json.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "230ef3ba-c6d1-4b27-ba75-51b7928530b0",
+              "name": "suggestedAction",
+              "value": "={{ $json.suggestedAction }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "23d8b8ea-4b69-469c-9c79-e7453b3ffd02",
+      "name": "Edit Fields2",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1424,
+        784
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "subbu22092003gh@gmail.com",
+        "subject": "Feature to add",
+        "message": "=<p>Date: {{ $json.receivedAt }}<p/>\n<p>Subject: {{ $json.subject }}<p/>\n<p>Product: {{ $json.product }}<p/>\n<p>Category: {{ $json.category }}<p/>\n<p>Summary: {{ $json.summary }}<p/>\n<p>Suggestion: {{ $json.suggestedAction }}<p/>",
+        "options": {}
+      },
+      "id": "7bfd116f-b5d9-4112-b2d0-bf9aa5c791c4",
+      "name": "Send a message1",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1648,
+        784
+      ],
+      "webhookId": "57997d0a-97ed-4df5-a1d4-db2142318a22",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5cfaa2d8-4bd0-41e4-90bc-941820fc4e49",
+              "name": "receivedAt",
+              "value": "={{ $json.receivedAt }}",
+              "type": "string"
+            },
+            {
+              "id": "8f9765a1-a789-49a8-a654-646e2a1c005d",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            },
+            {
+              "id": "b24b6f4e-0197-4f77-a405-4e2cef60af34",
+              "name": "product",
+              "value": "={{ $json.product }}",
+              "type": "string"
+            },
+            {
+              "id": "e0bdc404-368b-467b-84dc-bfcc46a0cd7a",
+              "name": "category",
+              "value": "={{ $json.category }}",
+              "type": "string"
+            },
+            {
+              "id": "2d277c41-4f89-4442-8165-d363d027e4b2",
+              "name": "summary",
+              "value": "={{ $json.summary }}",
+              "type": "string"
+            },
+            {
+              "id": "2db69226-8d70-4ce0-9fac-34c99d0bb87b",
+              "name": "suggestedAction",
+              "value": "={{ $json.suggestedAction }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bd2efc89-ae4b-42a5-b939-eee1b21b7870",
+      "name": "Edit Fields3",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1424,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "subbu22092003cg@gmail.com",
+        "subject": "Complaint to attend",
+        "message": "=<p>Date: {{ $json.receivedAt }}<p/>\n<p>Subject: {{ $json.subject }}<p/>\n<p>Product: {{ $json.product }}<p/>\n<p>Category: {{ $json.category }}<p/>\n<p>Summary: {{ $json.summary }}<p/>\n<p>Suggestion: {{ $json.suggestedAction }}<p/>",
+        "options": {}
+      },
+      "id": "b6f914f4-9425-425e-ac17-4328b1d1121c",
+      "name": "Send a message2",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1648,
+        976
+      ],
+      "webhookId": "dc43245d-1120-4b38-9576-7c1b68f03fe5",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-2.5-flash",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Summarize the following customer feedback into a short, professional paragraph (2-3 sentences) for an internal admin notification.\n\nSubject: {{ $json.subject }}\nProduct: {{ $json.product }}\nCategory: {{ $json.category }}\nSentiment: {{ $json.sentiment }}\nSummary: {{ $json.summary }}\nSuggested Action: {{ $json.suggestedAction }}\nBody: {{ $json.body }}\n\nUse only the provided information. Do not invent details. Return only the summary text."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "systemMessage": "You write concise, neutral internal summaries of customer feedback for an admin. Respond with only the summary text, no preamble or quotes."
+        }
+      },
+      "id": "3cb876a9-6d87-4218-92d1-422646bba3fb",
+      "name": "Compose Admin Summary",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1424,
+        1168
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const g = $input.item.json;\nfunction extractText(o) {\n  if (o == null) return \"\";\n  if (typeof o === \"string\") return o;\n  if (typeof o.content === \"string\") return o.content;\n  if (o.content && Array.isArray(o.content.parts)) return o.content.parts.map(p => p && p.text ? p.text : \"\").join(\"\");\n  if (o.content && typeof o.content.text === \"string\") return o.content.text;\n  if (Array.isArray(o.parts)) return o.parts.map(p => p && p.text ? p.text : \"\").join(\"\");\n  if (typeof o.text === \"string\") return o.text;\n  if (o.message && typeof o.message.content === \"string\") return o.message.content;\n  return \"\";\n}\nconst src = $(\"Validate Classification\").item.json;\nconst summaryText = String(extractText(g) || \"\").trim() || src.summary || \"\";\nfunction esc(s) { return String(s == null ? \"\" : s).replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\"); }\nconst date = src.receivedAt || \"\";\nconst subject = src.subject || \"(no subject)\";\nconst product = src.product || \"\";\nconst category = src.category || \"\";\nconst sentiment = src.sentiment || \"\";\nconst suggestedAction = src.suggestedAction || \"\";\nlet html = \"\";\nhtml += \"<h2>Customer Feedback Notification</h2>\";\nhtml += \"<p><strong>Date:</strong> \" + esc(date) + \"</p>\";\nhtml += \"<p><strong>Subject:</strong> \" + esc(subject) + \"</p>\";\nhtml += \"<p><strong>Product:</strong> \" + esc(product) + \"</p>\";\nhtml += \"<p><strong>Category:</strong> \" + esc(category) + \"</p>\";\nhtml += \"<p><strong>Sentiment:</strong> \" + esc(sentiment) + \"</p>\";\nhtml += \"<p><strong>Suggested Action:</strong> \" + esc(suggestedAction) + \"</p>\";\nhtml += \"<h3>Summary</h3><p>\" + esc(summaryText).replace(/\\n/g, \"<br>\") + \"</p>\";\nreturn { json: {\n  emailSubject: \"Customer Feedback [\" + category + \"] - \" + subject,\n  emailBody: html,\n  date: date,\n  subject: subject,\n  product: product,\n  category: category,\n  sentiment: sentiment,\n  suggestedAction: suggestedAction,\n  summary: summaryText\n} };"
+      },
+      "id": "7809dc51-4b01-4544-bed1-931637642da1",
+      "name": "Prepare Admin Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1648,
+        1168
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "subbu22092003ef@gmail.com",
+        "subject": "={{ $json.emailSubject }}",
+        "message": "={{ $json.emailBody }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "962d5647-16a1-4b2d-9e3c-a04758828539",
+      "name": "Send Admin Notification",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1872,
+        1168
+      ],
+      "webhookId": "e5f8afa9-c002-452d-bb4b-09f3e6f64d81",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "11712249-0491-47b1-8592-b695b601ef86",
+      "name": "Weekly Schedule",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        2688,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "10saJTZnkznpxE_Ce8d2yRN82T_4lQr3lxGsJfjfEbvQ",
+          "mode": "list",
+          "cachedResultName": "feedback_sheet"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Sheet1"
+        },
+        "options": {}
+      },
+      "id": "076d23b0-db34-4a7a-a272-f6213d0f7a36",
+      "name": "Read Feedback Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2912,
+        256
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ofWMNAL82ydnb6IP",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map(i => i.json).filter(r => r && Object.keys(r).length > 0);\nconst total = rows.length;\nfunction by(key) {\n  return rows.reduce((a, r) => {\n    const k = String(r[key] == null ? \"unknown\" : r[key]).toLowerCase() || \"unknown\";\n    a[k] = (a[k] || 0) + 1;\n    return a;\n  }, {});\n}\nconst sentiment = by(\"sentiment\");\nconst category = by(\"category\");\nconst priority = by(\"severity\");\nconst urgent = rows.filter(r => [\"urgent\", \"high\", \"critical\"].indexOf(String(r.severity || \"\").toLowerCase()) !== -1);\nconst lines = [];\nlines.push(\"Total feedback: \" + total);\nlines.push(\"Sentiment: \" + JSON.stringify(sentiment));\nlines.push(\"Category: \" + JSON.stringify(category));\nlines.push(\"Severity: \" + JSON.stringify(priority));\nreturn [{ json: {\n  total: total,\n  sentiment: sentiment,\n  category: category,\n  priority: priority,\n  urgentCount: urgent.length,\n  statsText: lines.join(\"\\n\"),\n  urgentItems: urgent.slice(0, 20).map(r => ({ subject: r.subject, summary: r.summary, severity: r.severity })),\n  weekOf: new Date().toISOString().slice(0, 10),\n} }];"
+      },
+      "id": "0fc3d324-4a63-471b-bfb0-9336c965a02b",
+      "name": "Aggregate Metrics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3136,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-2.5-flash",
+          "cachedResultName": "gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Here are the aggregated customer feedback metrics for the past week:\n\n{{ $json.statsText }}\n\nWrite a concise trend summary (3-5 sentences) highlighting the overall sentiment, the most common categories, and any urgent issues that need attention."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "id": "0383b16e-6817-45bb-ab35-2abe72167cac",
+      "name": "Summarize Trends",
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        3360,
+        256
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": null,
+          "name": "Gateway credits",
+          "__aiGatewayManaged": true
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const g = $input.first().json;\nfunction extractText(o) {\n  if (o == null) return \"\";\n  if (typeof o === \"string\") return o;\n  if (typeof o.content === \"string\") return o.content;\n  if (o.content && Array.isArray(o.content.parts)) return o.content.parts.map(p => p && p.text ? p.text : \"\").join(\"\");\n  if (o.content && typeof o.content.text === \"string\") return o.content.text;\n  if (Array.isArray(o.parts)) return o.parts.map(p => p && p.text ? p.text : \"\").join(\"\");\n  if (typeof o.text === \"string\") return o.text;\n  if (o.message && typeof o.message.content === \"string\") return o.message.content;\n  return \"\";\n}\nlet narrative = String(extractText(g) || \"\").trim();\nconst agg = $(\"Aggregate Metrics\").first().json;\nfunction esc(s) { return String(s == null ? \"\" : s).replace(/&/g, \"&amp;\").replace(/</g, \"&lt;\").replace(/>/g, \"&gt;\"); }\nlet html = \"\";\nhtml += \"<h2>Customer Feedback Weekly Digest</h2>\";\nhtml += \"<p><strong>Week of \" + esc(agg.weekOf) + \"</strong></p>\";\nhtml += \"<p>Total feedback analyzed: \" + agg.total + \"</p>\";\nhtml += \"<h3>AI Trend Summary</h3><p>\" + esc(narrative).replace(/\\n/g, \"<br>\") + \"</p>\";\nhtml += \"<h3>Breakdown</h3><pre>\" + esc(agg.statsText) + \"</pre>\";\nconst items = agg.urgentItems || [];\nif (items.length) {\n  html += \"<h3>Urgent Items</h3><ul>\";\n  for (const it of items) {\n    html += \"<li><strong>\" + esc(it.subject) + \"</strong>: \" + esc(it.summary) + \" (\" + esc(it.severity) + \")</li>\";\n  }\n  html += \"</ul>\";\n}\nreturn [{ json: {\n  emailSubject: \"Customer Feedback Weekly Digest - \" + esc(agg.weekOf),\n  emailBody: html,\n  weekOf: agg.weekOf,\n  total: agg.total\n} }];"
+      },
+      "id": "80577f64-02b4-4567-b472-c4a0d8a862a4",
+      "name": "Build Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3584,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "subbu22092003ef@gmail.com",
+        "subject": "={{ $json.emailSubject }}",
+        "message": "={{ $json.emailBody }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "860aa2d9-a307-4078-915f-ff127ce84f20",
+      "name": "Send Weekly Digest",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3808,
+        256
+      ],
+      "webhookId": "2d41a10b-0990-4abb-a78b-4b18555c7a35",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "ZtEscdgjddhlwDaf",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1Mh8G7Z91uNgc019R-7EOEzQJtHVmFyZWj7YA8YiIu0o",
+          "mode": "list",
+          "cachedResultName": "feedback",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Mh8G7Z91uNgc019R-7EOEzQJtHVmFyZWj7YA8YiIu0o/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1Mh8G7Z91uNgc019R-7EOEzQJtHVmFyZWj7YA8YiIu0o/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "receivedAt": "={{ $json.receivedAt }}",
+            "from": "={{ $json.from }}",
+            "subject": "={{ $json.subject }}",
+            "body": "={{ $json.body }}",
+            "product": "={{ $json.product }}",
+            "feature": "={{ $json.feature }}",
+            "issue": "={{ $json.issue }}",
+            "sentiment": "={{ $json.sentiment }}",
+            "category": "={{ $json.category }}",
+            "severity": "={{ $json.severity }}",
+            "summary": "={{ $json.summary }}",
+            "suggestedAction": "={{ $json.suggestedAction }}",
+            "confidence": "={{ $json.confidence }}",
+            "reviewrequest": "={{ $json.reviewRequired }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "receivedAt",
+              "displayName": "receivedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "from",
+              "displayName": "from",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "body",
+              "displayName": "body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "product",
+              "displayName": "product",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "feature",
+              "displayName": "feature",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "issue",
+              "displayName": "issue",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sentiment",
+              "displayName": "sentiment",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "category",
+              "displayName": "category",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "suggestedAction",
+              "displayName": "suggestedAction",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confidence",
+              "displayName": "confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "reviewrequest",
+              "displayName": "reviewrequest",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1232,
+        208
+      ],
+      "id": "ba2af0b3-42ff-4566-b0db-c784accb3cb5",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "ofWMNAL82ydnb6IP",
+          "name": "Google Sheets account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email": {
+      "main": [
+        [
+          {
+            "node": "Classify Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify Feedback": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Validate Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Classification": {
+      "main": [
+        [
+          {
+            "node": "Summarize For Reply",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize For Reply": {
+      "main": [
+        [
+          {
+            "node": "Prepare Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Reply": {
+      "main": [
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Reply": {
+      "main": [
+        [
+          {
+            "node": "Mark a message as read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Edit Fields3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compose Admin Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields1": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields2": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields3": {
+      "main": [
+        [
+          {
+            "node": "Send a message2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Admin Summary": {
+      "main": [
+        [
+          {
+            "node": "Prepare Admin Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Admin Email": {
+      "main": [
+        [
+          {
+            "node": "Send Admin Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Weekly Schedule": {
+      "main": [
+        [
+          {
+            "node": "Read Feedback Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Feedback Log": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Metrics": {
+      "main": [
+        [
+          {
+            "node": "Summarize Trends",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize Trends": {
+      "main": [
+        [
+          {
+            "node": "Build Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Digest": {
+      "main": [
+        [
+          {
+            "node": "Send Weekly Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "9b10f722-98ed-42c7-a71d-152fc217590a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "bab5a45ed273d37a28495d1713e6b0adae600fe817464c9451b38309923a67d9"
+  },
+  "nodeGroups": [
+    {
+      "id": "ed6a5b13-4457-412f-8541-ac9d0801dba4",
+      "name": "Intake & Classification",
+      "nodeIds": [
+        "d7200263-dd58-42f8-b41e-da48f0917d3e",
+        "573f782e-71fb-4d02-8cd8-e4935b54bb8a",
+        "57b75eb5-2fd3-4ad7-9fdd-db0654049fac",
+        "3923faa5-07f5-48ab-8323-2c22259e5a5f"
+      ],
+      "description": "Normalize each incoming feedback email and classify it with Gemini."
+    },
+    {
+      "id": "e27b2d47-2fd3-4fe7-9fdb-52a32abd7e78",
+      "name": "Category Routing",
+      "nodeIds": [
+        "aa379d5b-5a9d-4cbb-a9e5-9ea9ca7dedc2",
+        "f8fa95c2-a7b9-4ca7-88b4-6f29d0e6b582",
+        "8c2a51fb-2b63-4e9a-a7b7-efc99ed25ccd",
+        "23d8b8ea-4b69-469c-9c79-e7453b3ffd02",
+        "7bfd116f-b5d9-4112-b2d0-bf9aa5c791c4",
+        "bd2efc89-ae4b-42a5-b939-eee1b21b7870",
+        "b6f914f4-9425-425e-ac17-4328b1d1121c",
+        "3cb876a9-6d87-4218-92d1-422646bba3fb",
+        "7809dc51-4b01-4544-bed1-931637642da1",
+        "962d5647-16a1-4b2d-9e3c-a04758828539"
+      ],
+      "description": "Route feedback by category to the right team notification."
+    },
+    {
+      "id": "7a87a4a6-c368-47cb-9fe4-2f7c31e99ac6",
+      "name": "Weekly Digest",
+      "nodeIds": [
+        "076d23b0-db34-4a7a-a272-f6213d0f7a36",
+        "0fc3d324-4a63-471b-bfb0-9336c965a02b",
+        "0383b16e-6817-45bb-ab35-2abe72167cac",
+        "80577f64-02b4-4567-b472-c4a0d8a862a4",
+        "860aa2d9-a307-4078-915f-ff127ce84f20"
+      ],
+      "description": "Weekly aggregate of logged feedback summarized into a digest email."
+    }
+  ],
+  "id": "UygQIn5vFhQWS1z5",
+  "tags": []
+}
